@@ -1,40 +1,35 @@
-import { type NextRequest, NextResponse } from "next/server"
+import { NextResponse } from "next/server"
 
-export async function GET(request: NextRequest) {
+export async function POST(request: Request) {
   try {
-    // Get the file URL from the query parameters
-    const url = new URL(request.url)
-    const fileUrl = url.searchParams.get("fileUrl")
+    const { fileData, fileName } = await request.json()
 
-    if (!fileUrl) {
-      return NextResponse.json({ error: "No file URL provided" }, { status: 400 })
+    if (!fileData || !fileName) {
+      return NextResponse.json(
+        { error: "Missing file data or filename" },
+        { status: 400 }
+      )
     }
 
-    // Fetch the file from the FastAPI backend
-    const response = await fetch(fileUrl)
-
-    if (!response.ok) {
-      throw new Error(`Failed to download file: ${response.statusText}`)
+    // Convert base64 to binary
+    const binaryString = atob(fileData)
+    const bytes = new Uint8Array(binaryString.length)
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i)
     }
 
-    // Get the file content as a blob
-    const fileBlob = await response.blob()
-
-    // Create response with appropriate headers for a Word document
-    const downloadResponse = new NextResponse(fileBlob, {
+    // Create response with the file
+    return new NextResponse(bytes, {
       headers: {
         "Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        "Content-Disposition": "attachment; filename=processed-document.docx",
+        "Content-Disposition": `attachment; filename="${fileName}"`,
       },
     })
-
-    return downloadResponse
   } catch (error) {
-    console.error("Error downloading file:", error)
+    console.error("Error processing file download:", error)
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Failed to download processed file" },
+      { error: "Failed to process file download" },
       { status: 500 }
     )
   }
 }
-
