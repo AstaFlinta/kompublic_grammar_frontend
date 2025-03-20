@@ -9,7 +9,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Progress } from "@/components/ui/progress"
 
 export default function WordFileProcessor() {
-  const [file, setFile] = useState<File | null>(null)
+  const [files, setFiles] = useState<File[]>([])
   const [isDragging, setIsDragging] = useState(false)
   const [isUploading, setIsUploading] = useState(false)
   const [isProcessing, setIsProcessing] = useState(false)
@@ -18,6 +18,9 @@ export default function WordFileProcessor() {
   const [processedFileData, setProcessedFileData] = useState<string | null>(null)
   const [processedFileName, setProcessedFileName] = useState<string>("processed-document.docx")
   const [progress, setProgress] = useState(0)
+  const [processedFiles, setProcessedFiles] = useState<Array<{name: string, data: string}>>([])
+  const [fileHistory, setFileHistory] = useState<Array<{name: string, data: string}>>([])
+  const [currentFileIndex, setCurrentFileIndex] = useState<number>(0)
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault()
@@ -33,95 +36,110 @@ export default function WordFileProcessor() {
     setIsDragging(false)
 
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      const droppedFile = e.dataTransfer.files[0]
-      if (
-        droppedFile.type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
-        droppedFile.type === "application/msword"
-      ) {
-        setFile(droppedFile)
+      const validFiles = Array.from(e.dataTransfer.files).filter(file => 
+        file.type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+        file.type === "application/msword"
+      )
+      
+      if (validFiles.length > 0) {
+        setFiles(validFiles)
         setError(null)
       } else {
-        setError("Upload venligst et Word dokument (.doc eller .docx)")
+        setError("Upload venligst Word dokumenter (.doc eller .docx)")
       }
     }
   }
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
-      const selectedFile = e.target.files[0]
-      if (
-        selectedFile.type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
-        selectedFile.type === "application/msword"
-      ) {
-        setFile(selectedFile)
+      const validFiles = Array.from(e.target.files).filter(file => 
+        file.type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+        file.type === "application/msword"
+      )
+      
+      if (validFiles.length > 0) {
+        setFiles(validFiles)
         setError(null)
       } else {
-        setError("Upload venligst et Word dokument (.doc eller .docx)")
+        setError("Upload venligst Word dokumenter (.doc eller .docx)")
       }
     }
   }
 
   const handleSubmit = async () => {
-    if (!file) return
+    if (files.length === 0) return
 
     setIsUploading(true)
     setProgress(0)
     setError(null)
+    setCurrentFileIndex(0)
 
-    // Create FormData to send the file
-    const formData = new FormData()
-    formData.append("file", file)
+    for (let i = 0; i < files.length; i++) {
+      setCurrentFileIndex(i)
+      const file = files[i]
+      
+      // Create FormData to send the file
+      const formData = new FormData()
+      formData.append("file", file)
 
-    try {
-      // Simulate upload progress
-      const progressInterval = setInterval(() => {
-        setProgress((prev) => {
-          if (prev >= 90) {
-            clearInterval(progressInterval)
-            return 90
-          }
-          return prev + 10
+      try {
+        // Simulate upload progress
+        const progressInterval = setInterval(() => {
+          setProgress((prev) => {
+            if (prev >= 90) {
+              clearInterval(progressInterval)
+              return 90
+            }
+            return prev + 10
+          })
+        }, 300)
+
+        // Send to our Next.js API endpoint
+        const response = await fetch("/api/process-word-file", {
+          method: "POST",
+          body: formData,
         })
-      }, 300)
 
-      // Send to our Next.js API endpoint
-      const response = await fetch("/api/process-word-file", {
-        method: "POST",
-        body: formData,
-      })
+        clearInterval(progressInterval)
+        setProgress(100)
+        setIsUploading(false)
 
-      clearInterval(progressInterval)
-      setProgress(100)
-      setIsUploading(false)
+        if (!response.ok) {
+          const errorData = await response.json()
+          throw new Error(errorData.error || `Error: ${response.status}`)
+        }
 
-      if (!response.ok) {
-        const errorData = await response.json()
-        throw new Error(errorData.error || `Error: ${response.status}`)
+        // Start processing phase
+        setIsProcessing(true)
+
+        const result = await response.json();
+        
+        // Store the base64 data and filename
+        setProcessedFileData(result.file);
+        const newFilename = result.filename || `processed_${result.debug.originalFilename}`;
+        console.log('Setting filename to:', newFilename);
+        setProcessedFileName(newFilename);
+        
+        // Add to both current processed files and history
+        const newFile = { name: newFilename, data: result.file };
+        setProcessedFiles(prev => [...prev, newFile]);
+        setFileHistory(prev => [...prev, newFile]);
+        
+        setIsProcessing(false)
+      } catch (err) {
+        setIsUploading(false)
+        setIsProcessing(false)
+        setProgress(0)
+        setError(err instanceof Error ? err.message : "An error occurred during upload")
+        return
       }
-
-      // Start processing phase
-      setIsProcessing(true)
-
-      const result = await response.json();
-      
-      // Store the base64 data and filename
-      setProcessedFileData(result.file);
-      const newFilename = result.filename || `processed_${result.debug.originalFilename}`;
-      console.log('Setting filename to:', newFilename);
-      setProcessedFileName(newFilename);
-      
-      setIsProcessing(false)
-      setIsComplete(true)
-    } catch (err) {
-      setIsUploading(false)
-      setIsProcessing(false)
-      setProgress(0)
-      setError(err instanceof Error ? err.message : "An error occurred during upload")
     }
+
+    setIsComplete(true)
   }
 
-  const handleDownload = async () => {
-    if (!processedFileData || !processedFileName) return;
+  const handleDownload = async (fileData: string, fileName: string) => {
+    if (!fileData || !fileName) return;
 
     try {
       const response = await fetch("/api/download-processed-file", {
@@ -130,8 +148,8 @@ export default function WordFileProcessor() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          fileData: processedFileData,
-          fileName: processedFileName,
+          fileData: fileData,
+          fileName: fileName,
         }),
       });
 
@@ -146,7 +164,7 @@ export default function WordFileProcessor() {
       // Create and trigger download
       const link = document.createElement('a');
       link.href = url;
-      link.download = processedFileName;
+      link.download = fileName;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -156,13 +174,21 @@ export default function WordFileProcessor() {
     }
   };
 
+  const handleDownloadAll = async () => {
+    for (const file of processedFiles) {
+      await handleDownload(file.data, file.name);
+    }
+  };
+
   const resetForm = () => {
-    setFile(null)
+    setFiles([])
     setIsUploading(false)
     setIsProcessing(false)
     setIsComplete(false)
     setError(null)
     setProgress(0)
+    setCurrentFileIndex(0)
+    setProcessedFiles([])  // Clear only the current batch
   }
 
   return (
@@ -185,16 +211,18 @@ export default function WordFileProcessor() {
 
                 <h2 className="text-2xl font-bold mb-2 dark:text-white">Behandling fuldført!</h2>
                 <p className="text-slate-600 dark:text-slate-300 mb-8">
-                  Din fil er blevet behandlet og er klar til download.
+                  {processedFiles.length} fil{processedFiles.length !== 1 ? 'er' : ''} er blevet behandlet og er klar til download.
                 </p>
 
                 <div className="flex flex-col sm:flex-row gap-4 w-full max-w-md">
                   <Button
                     className="flex-1 py-6 gap-2 bg-emerald-500 hover:bg-emerald-600 text-white shadow-lg shadow-emerald-200 dark:shadow-emerald-900/20"
-                    onClick={handleDownload}
+                    onClick={handleDownloadAll}
                   >
                     <Download className="h-5 w-5" />
-                    <span className="font-medium">Download Fil</span>
+                    <span className="font-medium">
+                      {processedFiles.length === 1 ? 'Download fil' : 'Download alle filer'}
+                    </span>
                   </Button>
 
                   <Button
@@ -203,7 +231,7 @@ export default function WordFileProcessor() {
                     onClick={resetForm}
                   >
                     <RefreshCw className="h-5 w-5" />
-                    <span className="font-medium">Behandl ny fil</span>
+                    <span className="font-medium">Behandl ny fil eller filer</span>
                   </Button>
                 </div>
               </div>
@@ -235,7 +263,7 @@ export default function WordFileProcessor() {
                   onDragLeave={handleDragLeave}
                   onDrop={handleDrop}
                 >
-                  {!file ? (
+                  {!files.length ? (
                     <div className="space-y-4">
                       <div className="flex justify-center">
                         <div className="w-20 h-20 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center">
@@ -251,7 +279,7 @@ export default function WordFileProcessor() {
                         className="bg-emerald-500 hover:bg-emerald-600 text-white"
                         onClick={() => document.getElementById("file-upload")?.click()}
                       >
-                        Vælg fil
+                        Vælg fil eller filer
                       </Button>
                       <input
                         id="file-upload"
@@ -259,6 +287,7 @@ export default function WordFileProcessor() {
                         accept=".doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                         className="hidden"
                         onChange={handleFileChange}
+                        multiple
                       />
                     </div>
                   ) : (
@@ -269,8 +298,12 @@ export default function WordFileProcessor() {
                         </div>
                       </div>
                       <div>
-                        <p className="text-lg font-medium break-all dark:text-white">{file.name}</p>
-                        <p className="text-sm text-slate-500 dark:text-slate-400">{(file.size / 1024).toFixed(2)} KB</p>
+                        <p className="text-lg font-medium dark:text-white">
+                          {files.length} fil{files.length !== 1 ? 'er' : ''} valgt
+                        </p>
+                        <p className="text-sm text-slate-500 dark:text-slate-400">
+                          {files.map(file => file.name).join(', ')}
+                        </p>
                       </div>
                       <div className="flex justify-center gap-3">
                         <Button
@@ -278,7 +311,9 @@ export default function WordFileProcessor() {
                           className="bg-emerald-500 hover:bg-emerald-600 text-white"
                           onClick={resetForm}
                         >
-                          Skift fil
+                          <span className="font-medium">
+                            {files.length === 1 ? 'Skift fil' : 'Skift filer'}
+                          </span>
                         </Button>
                         <Button
                           variant="outline"
@@ -286,7 +321,9 @@ export default function WordFileProcessor() {
                           onClick={handleSubmit}
                           disabled={isUploading || isProcessing}
                         >
-                          Behandl fil
+                          <span className="font-medium">
+                            {files.length === 1 ? 'Behandl fil' : 'Behandl alle filer'}
+                          </span>
                         </Button>
                       </div>
                     </div>
@@ -315,8 +352,12 @@ export default function WordFileProcessor() {
                         </div>
                       </div>
                       <div>
-                        <p className="font-medium dark:text-white">Behandler dit dokument</p>
-                        <p className="text-sm text-slate-500 dark:text-slate-400">Dette kan tage et øjeblik...</p>
+                        <p className="font-medium dark:text-white">
+                          Behandler dokument {currentFileIndex + 1} af {files.length}
+                        </p>
+                        <p className="text-sm text-slate-500 dark:text-slate-400">
+                          {files[currentFileIndex]?.name}
+                        </p>
                       </div>
                     </div>
                   </div>
@@ -330,24 +371,48 @@ export default function WordFileProcessor() {
                 )}
 
                 {!isComplete && processedFileData && (
-                  <div className="mt-6 p-4 bg-emerald-50 dark:bg-emerald-900/10 rounded-xl border border-emerald-200 dark:border-emerald-800/30">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <CheckCircle className="h-5 w-5 text-emerald-500" />
-                        <p className="text-sm font-medium text-emerald-700 dark:text-emerald-400">
-                          Tidligere fil blev behandlet
-                        </p>
+                  <div className="mt-6 space-y-4">
+                    <div className="p-4 bg-emerald-50 dark:bg-emerald-900/10 rounded-xl border border-emerald-200 dark:border-emerald-800/30">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <CheckCircle className="h-5 w-5 text-emerald-500" />
+                          <p className="text-sm font-medium text-emerald-700 dark:text-emerald-400">
+                            {processedFileName} blev behandlet
+                          </p>
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="gap-1 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-100 dark:text-emerald-400 dark:hover:bg-emerald-900/30"
+                          onClick={() => handleDownload(processedFileData, processedFileName)}
+                        >
+                          <Download className="h-4 w-4" />
+                          Download
+                        </Button>
                       </div>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="gap-1 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-100 dark:text-emerald-400 dark:hover:bg-emerald-900/30"
-                        onClick={handleDownload}
-                      >
-                        <Download className="h-4 w-4" />
-                        Download
-                      </Button>
                     </div>
+
+                    {fileHistory.length > 1 && (
+                      <div className="p-4 bg-slate-50 dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700">
+                        <h3 className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Tidligere behandlede filer:</h3>
+                        <ul className="space-y-2">
+                          {fileHistory.slice(0, -1).map((file, index) => (
+                            <li key={index} className="flex items-center justify-between text-sm">
+                              <span className="text-slate-600 dark:text-slate-400">{file.name}</span>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="gap-1 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-100 dark:text-emerald-400 dark:hover:bg-emerald-900/30"
+                                onClick={() => handleDownload(file.data, file.name)}
+                              >
+                                <Download className="h-4 w-4" />
+                                Download
+                              </Button>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
